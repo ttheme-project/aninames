@@ -7,7 +7,7 @@
   "author": "kecan0406",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kecan0406/aninames.git"
+    "url": "git+https://github.com/ttheme-project/aninames.git"
   },
   "exports": {
     ".": {

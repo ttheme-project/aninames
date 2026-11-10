@@ -459,7 +459,7 @@ async function page(built: string): Promise<string> {
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     '<title>aninames</title>',
     '<h1>aninames</h1>',
-    `<p>The search keys of <a href="https://github.com/kecan0406/aninames">aninames</a>, a multilingual alias index for anime titles and characters, as sorted gzip'd JSON files for its client library. Built ${html(built)}; the files are listed in <a href="manifest.json">manifest.json</a>.</p>`,
+    `<p>The search keys of <a href="https://github.com/ttheme-project/aninames">aninames</a>, a multilingual alias index for anime titles and characters, as sorted gzip'd JSON files for its client library. Built ${html(built)}; the files are listed in <a href="manifest.json">manifest.json</a>.</p>`,
     `<p>${html(TERMS)}</p>`,
     ...sections,
     '',
