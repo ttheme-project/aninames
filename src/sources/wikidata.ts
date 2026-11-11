@@ -1,4 +1,4 @@
-import { rename } from 'node:fs/promises'
+import { rename, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Entry, Kind, Name, Namespace, Nature, Ref, Source } from '../model.ts'
 import { ref, USER_AGENT } from '../model.ts'
@@ -646,12 +646,22 @@ async function* stage(raw: string): AsyncIterable<Entry> {
   }
 }
 
+async function dated(raw: string): Promise<string | undefined> {
+  const times: number[] = []
+  for (const { file } of [...QUERIES, ...LINKS]) {
+    const info = await stat(join(raw, `${file}.json`)).catch(() => undefined)
+    if (info) times.push(info.mtimeMs)
+  }
+  return times.length > 0 ? new Date(Math.min(...times)).toISOString().slice(0, 10) : undefined
+}
+
 const wikidata: Source = {
   name: 'wikidata',
   layer: 'core',
   license: 'CC0-1.0',
   fetch: fetchAll,
   stage,
+  dated,
 }
 
 export default wikidata

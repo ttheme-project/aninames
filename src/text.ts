@@ -557,6 +557,10 @@ export function initials(text: string): string {
   return out
 }
 
+export function reversed(text: string): string {
+  return [...text].reverse().join('')
+}
+
 export function editDistance(a: string, b: string, limit: number): number {
   const x = [...a]
   const y = [...b]

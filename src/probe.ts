@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { convertHangulToQwerty, getChoseong } from 'es-hangul'
+import { compare } from './client/order.ts'
 import type { Kind, Layer } from './model.ts'
 import { type Card, Index } from './search.ts'
 import { flat, hasHangul, hasKanji, isKana, kanaToRomaji } from './text.ts'
@@ -75,20 +76,53 @@ function deleteMiddle(text: string): string | undefined {
   return /[a-z]/i.test(letters[at] ?? '') ? [...letters.slice(0, at), ...letters.slice(at + 1)].join('') : undefined
 }
 
-export function forms(card: Card): [string, string][] {
+function swapStart(text: string): string | undefined {
+  const [first = '', second = '', ...rest] = [...text]
+  if (rest.filter((ch) => /[a-z]/i.test(ch)).length < 4) return undefined
+  return /[a-z]/i.test(first) && /[a-z]/i.test(second) && first.toLowerCase() !== second.toLowerCase()
+    ? [second, first, ...rest].join('')
+    : undefined
+}
+
+function named(card: Card) {
+  const official = (name: Card['names'][number]) => name.kind === 'official' || name.kind === 'main'
+  return {
+    japanese: pick(card, (n) => official(n) && JAPANESE.test(n.text) && (hasKanji(n.text) || isKana(n.text))),
+    reading: pick(card, (n) => n.kind === 'reading' && isKana(n.text)),
+    romaji: pick(
+      card,
+      (n) => official(n) && (n.lang === 'en' || n.lang === 'ja-Latn') && /^[\p{Script=Latin}\s'.-]+$/u.test(n.text),
+    ),
+    korean: pick(card, (n) => n.lang === 'ko' && hasHangul(n.text) && n.kind !== 'redirect'),
+    short: pick(card, (n) => n.kind === 'short'),
+  }
+}
+
+export function workOf(index: Index, card: Card): Card | undefined {
+  if (card.kind !== 'character') return undefined
+  const [best] = [...card.works].sort((a, b) => index.rank(b) - index.rank(a) || compare(a, b))
+  return best ? index.card(best) : undefined
+}
+
+export function franchise(index: Index, card: Card): [query: string, kin: string[]][] {
+  if (card.kind !== 'work') return []
+  const { japanese, romaji, short } = named(card)
+  return [japanese, romaji, short].flatMap((query): [string, string[]][] => {
+    const kin = query ? index.kin(card.id, query) : []
+    return query && kin.length > 0 ? [[query, kin]] : []
+  })
+}
+
+export function shareOf(kin: string[], found: string[]): number {
+  return kin.filter((id) => found.includes(id)).length / Math.min(kin.length, 9)
+}
+
+export function forms(card: Card, work?: Card): [string, string][] {
   const out: [string, string][] = []
   const add = (form: string, query: string | undefined) => {
     if (query?.trim()) out.push([form, query.trim()])
   }
-  const official = (name: Card['names'][number]) => name.kind === 'official' || name.kind === 'main'
-  const japanese = pick(card, (n) => official(n) && JAPANESE.test(n.text) && (hasKanji(n.text) || isKana(n.text)))
-  const reading = pick(card, (n) => n.kind === 'reading' && isKana(n.text))
-  const romaji = pick(
-    card,
-    (n) => official(n) && (n.lang === 'en' || n.lang === 'ja-Latn') && /^[\p{Script=Latin}\s'.-]+$/u.test(n.text),
-  )
-  const korean = pick(card, (n) => n.lang === 'ko' && hasHangul(n.text) && n.kind !== 'redirect')
-  const short = pick(card, (n) => n.kind === 'short')
+  const { japanese, reading, romaji, korean, short } = named(card)
   add('japanese', japanese)
   add('kana reading', reading)
   add('romaji', romaji)
@@ -101,10 +135,18 @@ export function forms(card: Card): [string, string][] {
     if (plain !== romaji?.toLowerCase()) add('romaji short vowels', plain)
   }
   add('romaji typo', romaji ? deleteMiddle(romaji) : undefined)
+  add('romaji start typo', romaji ? swapStart(romaji) : undefined)
   add('korean', korean)
   add('korean initials', korean ? getChoseong(korean) : undefined)
   add('korean on qwerty', korean ? convertHangulToQwerty(korean) : undefined)
   if (card.kind === 'work') add('short title', short)
+  if (card.kind === 'character' && work) {
+    const title = named(work)
+    if (japanese && title.japanese) add('name and work', `${japanese} ${title.japanese}`)
+    if (romaji?.split(' ').length === 2 && title.romaji)
+      add('given name and work', `${romaji.split(' ')[0]} ${title.romaji}`)
+    if (korean && title.korean) add('korean name and work', `${korean} ${title.korean}`)
+  }
   return out
 }
 
@@ -190,11 +232,17 @@ export async function probe(dir: string, layers: Layer[], size: number): Promise
   )
   for (const kind of ['work', 'character'] as const) {
     const tallies = new Map<string, Map<string, Tally>>()
+    const families = new Map<string, [share: number, queries: number]>()
     for (const band of BANDS) {
       for (const id of chosen[kind][band.name] ?? []) {
         const card = index.card(id)
         if (!card) continue
-        for (const [shape, query] of forms(card)) {
+        for (const [query, kin] of franchise(index, card)) {
+          const found = index.search(query, { kind, limit: 10 }).map((hit) => hit.id)
+          const [share, queries] = families.get(band.name) ?? [0, 0]
+          families.set(band.name, [share + shareOf(kin, found), queries + 1])
+        }
+        for (const [shape, query] of forms(card, workOf(index, card))) {
           const form = index.homonyms(query, kind) > 1 ? `${shape} (shared)` : shape
           const byBand = tallies.get(form) ?? new Map<string, Tally>()
           const row = byBand.get(band.name) ?? blank()
@@ -211,6 +259,15 @@ export async function probe(dir: string, layers: Layer[], size: number): Promise
       if (process.env.ANINAMES_MISSES)
         for (const band of BANDS)
           for (const miss of byBand.get(band.name)?.misses ?? []) console.log(`      ✗ [${band.name}] ${miss}`)
+    }
+    if (families.size > 0) {
+      const cells = BANDS.map((band) => {
+        const [share, queries] = families.get(band.name) ?? [0, 0]
+        return (
+          queries > 0 ? `${String(Math.round((100 * share) / queries)).padStart(3)}%      n=${queries}` : '-'
+        ).padEnd(18)
+      })
+      console.log(`  ${'family in the ten'.padEnd(20)} ${cells.join('')}`)
     }
   }
   index.close()

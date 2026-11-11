@@ -6,8 +6,10 @@ import { manifestPaths, readManifest } from './client/format.ts'
 import { Names } from './client/names.ts'
 import { fileSource, httpSource, type Source } from './client/source.ts'
 import { LAYERS } from './model.ts'
-import { FROZEN, type Frozen, forms } from './probe.ts'
+import { dated } from './pack.ts'
+import { FROZEN, type Frozen, forms, workOf } from './probe.ts'
 import { Index } from './search.ts'
+import { pick } from './sources/index.ts'
 
 const TABLES = ['entities', 'names', 'refs', 'works', 'related', 'homes', 'copyrights', 'ranks', 'adults'] as const
 
@@ -23,9 +25,11 @@ const LEAST_RIGHT_HOMES = 130
 
 const LEADS_READ = 60
 
-const LEAST_FIRST = 0.85
+const LEAST_FIRST = 0.88
 
-export type Stats = Record<string, number>
+const MOST_DAYS_BEHIND = 14
+
+export type Stats = Record<string, number | string>
 
 export function statsOf(dir: string): Stats {
   const stats: Stats = {}
@@ -45,12 +49,13 @@ export function statsOf(dir: string): Stats {
 export function lostFrom(before: Stats, after: Stats): string[] {
   return Object.entries(before).flatMap(([key, count]) => {
     const now = after[key] ?? 0
-    return now < count * (1 - MOST_LOST) ? [`${key} fell from ${count} to ${now}`] : []
+    return typeof count === 'number' && typeof now === 'number' && now < count * (1 - MOST_LOST)
+      ? [`${key} fell from ${count} to ${now}`]
+      : []
   })
 }
 
-function brokenFiles(site: string): string[] {
-  const paths = manifestPaths(readManifest(readFileSync(join(site, 'manifest.json'), 'utf8')))
+function brokenFiles(site: string, paths: Iterable<string>): string[] {
   return [...paths].flatMap((path) => {
     const file = join(site, path)
     if (!existsSync(file)) return [`${path} is missing`]
@@ -110,7 +115,7 @@ async function lostRanking(dir: string): Promise<string[]> {
     for (const id of Object.values(chosen[kind]).flat()) {
       const card = index.card(id)
       if (!card) continue
-      for (const [, query] of forms(card)) {
+      for (const [, query] of forms(card, workOf(index, card))) {
         total++
         if (index.search(query, { kind, limit: 1 })[0]?.id === id) first++
       }
@@ -189,8 +194,15 @@ export async function checkLive(url: string): Promise<number> {
 
 export async function audit(dir: string, previous?: string, published: readonly string[] = []): Promise<number> {
   const site = join(dir, 'site')
-  const failed = brokenFiles(site)
+  const manifest = readManifest(readFileSync(join(site, 'manifest.json'), 'utf8'))
+  const failed = brokenFiles(site, manifestPaths(manifest))
   const stats = statsOf(dir)
+  for (const [name, day] of await dated(await pick([]))) {
+    stats[`${name}.dated`] = day
+    const behind = Math.floor((Date.parse(manifest.built) - Date.parse(day)) / 86_400_000)
+    const aloud = behind > MOST_DAYS_BEHIND ? '::warning::' : ''
+    console.log(`${aloud}audit: ${name}'s data is of ${day}, ${behind} days before the build`)
+  }
   if (previous && existsSync(previous)) {
     failed.push(...lostFrom(JSON.parse(readFileSync(previous, 'utf8')) as Stats, stats))
   } else console.log('audit: no previous stats to compare with')

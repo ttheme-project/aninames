@@ -26,6 +26,7 @@ import {
   type Source,
   SPINE,
 } from './model.ts'
+import { licenses } from './pack.ts'
 import { AUTHORITY } from './sources/authority.ts'
 import { load, NAMES } from './sources/index.ts'
 import { BANGUMI, link, MEDIUM_ORDER, type Medium, mediaOf } from './spine.ts'
@@ -788,7 +789,7 @@ function partsOf(text: string): string[] {
   return tokens.length >= 2 ? [...new Set(tokens)] : []
 }
 
-function schema(db: Database): void {
+export function schema(db: Database): void {
   db.run('PRAGMA journal_mode = OFF')
   db.run('PRAGMA synchronous = OFF')
   db.run('CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
@@ -813,7 +814,7 @@ function schema(db: Database): void {
   db.run('CREATE TABLE copyrights (entity TEXT NOT NULL, tag TEXT NOT NULL, tier INTEGER NOT NULL)')
 }
 
-function indexes(db: Database): void {
+export function indexes(db: Database): void {
   db.run("CREATE VIRTUAL TABLE names_fts USING fts5(flat, content='names', content_rowid='rowid', tokenize='trigram')")
   db.run("INSERT INTO names_fts(names_fts) VALUES ('rebuild')")
   db.run('CREATE INDEX names_flat ON names (flat)')
@@ -828,12 +829,6 @@ function indexes(db: Database): void {
   db.run('CREATE INDEX works_work ON works (work)')
   db.run('CREATE INDEX related_work ON related (work)')
   db.run('ANALYZE')
-}
-
-function licenses(sources: Source[]): Record<Layer, string[]> {
-  const out: Record<Layer, string[]> = { core: [], kowiki: [], unlicensed: [] }
-  for (const source of sources) out[source.layer].push(`${source.name}: ${source.license}`)
-  return out
 }
 
 const ownTitles = (m: Staged) => m.entry.names.map((name) => flat(name.text))
@@ -883,7 +878,7 @@ export async function build(): Promise<void> {
     return union.has(key) ? byRoot.get(union.find(key)) : undefined
   }
   await mkdir(DIST, { recursive: true })
-  const notes = licenses(sources)
+  const notes = new Map(await licenses(sources))
   const adultWorks: Record<Layer, Set<string>> = { core: new Set(), kowiki: new Set(), unlicensed: new Set() }
   for (const entity of entities.values()) {
     if (entity.kind !== 'work') continue
@@ -1013,7 +1008,7 @@ export async function build(): Promise<void> {
       const meta = db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)')
       meta.run('layer', layer)
       meta.run('built', new Date().toISOString())
-      meta.run('sources', notes[layer].join('\n'))
+      meta.run('sources', (notes.get(layer) ?? []).join('\n'))
     })()
     indexes(db)
     db.close()

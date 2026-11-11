@@ -178,10 +178,11 @@ test('a work with its own tag and an anime proper outrank a trailer', () => {
   expect(priorOf('anime', 'TV', true)).toBeGreaterThan(priorOf('anime', 'TV', false))
 })
 
-test('an audit fails a table that lost a tenth of its rows and not one that lost less', () => {
+test('an audit fails a table that lost a tenth of its rows, not one that lost less nor a source whose day is gone', () => {
   expect(lostFrom({ 'unlicensed.names': 100 }, { 'unlicensed.names': 91 })).toEqual([])
   expect(lostFrom({ 'unlicensed.names': 100 }, { 'unlicensed.names': 89 })).toHaveLength(1)
   expect(lostFrom({ 'kowiki.names': 100 }, {})).toHaveLength(1)
+  expect(lostFrom({ 'danbooru.dated': '2026-10-03' }, {})).toEqual([])
 })
 
 function keyed(rows: [root: string, year: number, tag?: string, posts?: number][]): Map<string, KeyedWork> {

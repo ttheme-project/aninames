@@ -10,21 +10,19 @@ import {
   FORMAT,
   HASH_LENGTH,
   type KeyTable,
-  MAIN,
   NAME_KINDS,
   type Packed,
   pack,
-  present,
   shared,
   TABLES,
   type Table,
   TRUSTED,
 } from './client/format.ts'
 import { compare } from './client/order.ts'
-import { priorOf, weightOf } from './match.ts'
 import { LAYERS, type Layer, type NameKind, SPINE } from './model.ts'
 import { licenses, notice, TERMS } from './pack.ts'
-import { flat, qualifiers } from './text.ts'
+import { contextOf, type Context as Derived, IDS, type Key, keyRows, reachOf } from './rows.ts'
+import { flat, qualifiers, reversed } from './text.ts'
 
 export const DOMAIN = 'names.ttheme.dev'
 
@@ -83,201 +81,18 @@ export class Writer {
   }
 }
 
-type Numbering = Map<string, number>
-
-const IDS =
-  'SELECT entity AS id FROM names UNION SELECT id FROM entities UNION SELECT entity FROM refs UNION SELECT entity FROM homes'
-
-function numbering(dbs: Map<Layer, Database>): { eid: Numbering; masks: Uint8Array } {
-  const seen = new Map<string, number>()
-  for (const [layer, db] of dbs) {
-    for (const { id } of db.query<{ id: string }, []>(IDS).iterate()) {
-      if (!id.startsWith('w/') && !id.startsWith('c/')) throw new Error(`aninames: entity ${id} is neither w/ nor c/`)
-      seen.set(id, (seen.get(id) ?? 0) | present(layer))
-    }
-  }
-  const ids = [...seen.keys()].sort(compare)
-  const masks = new Uint8Array(ids.length)
-  ids.forEach((id, at) => {
-    masks[at] = seen.get(id) ?? 0
-  })
-  return { eid: new Map(ids.map((id, at) => [id, at])), masks }
-}
-
-interface Scores {
-  rank: Int32Array
-  standing: Int32Array
-  extra: Int8Array
-  adult: Uint8Array
-  related: Map<Layer, Map<number, number[]>>
-}
-
-function scores(dbs: Map<Layer, Database>, eid: Numbering): Scores {
-  const n = eid.size
-  const best = new Float64Array(n)
-  const heads = new Map<number, [medium: string | null, type: string | null]>()
-  const tagged = new Uint8Array(n)
-  const adult = new Uint8Array(n)
-  const spaces = new Uint32Array(n)
-  const bits = new Map<string, number>()
-  const all = new Map<number, Set<number>>()
-  const related = new Map<Layer, Map<number, number[]>>()
-  for (const [layer, db] of dbs) {
-    for (const row of db.query<{ entity: string; rank: number }, []>('SELECT entity, rank FROM ranks').iterate()) {
-      const at = eid.get(row.entity)
-      if (at !== undefined) best[at] = Math.max(best[at] ?? 0, row.rank)
-    }
-    for (const row of db
-      .query<{ id: string; kind: string; medium: string | null; type: string | null }, []>(
-        'SELECT id, kind, medium, type FROM entities',
-      )
-      .iterate()) {
-      const at = eid.get(row.id)
-      if (at === undefined || row.kind !== 'work' || heads.has(at)) continue
-      heads.set(at, [row.medium, row.type])
-    }
-    for (const row of db
-      .query<{ entity: string }, []>("SELECT DISTINCT entity FROM refs WHERE ref GLOB 'danbooru:*'")
-      .iterate()) {
-      const at = eid.get(row.entity)
-      if (at !== undefined) tagged[at] = 1
-    }
-    for (const row of db.query<{ entity: string }, []>('SELECT entity FROM adults').iterate()) {
-      const at = eid.get(row.entity)
-      if (at !== undefined) adult[at] = 1
-    }
-    for (const row of db
-      .query<{ entity: string; space: string }, []>(
-        "SELECT DISTINCT entity, substr(ref, 1, instr(ref, ':') - 1) AS space FROM refs",
-      )
-      .iterate()) {
-      const at = eid.get(row.entity)
-      if (at === undefined) continue
-      let bit = bits.get(row.space)
-      if (bit === undefined) {
-        bit = bits.size
-        if (bit >= 32) throw new Error('aninames: more than 32 ref namespaces')
-        bits.set(row.space, bit)
-      }
-      spaces[at] = (spaces[at] ?? 0) | (1 << bit)
-    }
-    const own = new Map<number, number[]>()
-    for (const row of db.query<{ work: string; other: string }, []>('SELECT work, other FROM related').iterate()) {
-      const from = eid.get(row.work)
-      const to = eid.get(row.other)
-      if (from === undefined || to === undefined) continue
-      const list = own.get(from)
-      if (list) list.push(to)
-      else own.set(from, [to])
-      all.set(from, (all.get(from) ?? new Set()).add(to))
-    }
-    related.set(layer, own)
-  }
-  const rankOf = (at: number) => best[at] ?? 0
-  const out: Scores = {
-    rank: new Int32Array(n),
-    standing: new Int32Array(n),
-    extra: new Int8Array(n),
-    adult,
-    related,
-  }
-  for (const [id, at] of eid) {
-    const rank = rankOf(at)
-    let standing = rank
-    const work = id.startsWith('w/')
-    if (work) {
-      let family = 0
-      for (const other of reachOf(all, at)) family = Math.max(family, rankOf(other))
-      standing = Math.max(standing, 0.9 * family)
-    }
-    let count = 0
-    for (let mask = spaces[at] ?? 0; mask; mask &= mask - 1) count++
-    out.rank[at] = Math.round(rank * 1000)
-    out.standing[at] = Math.round(standing * 1000)
-    const [medium = null, type = null] = heads.get(at) ?? []
-    out.extra[at] = work ? priorOf(medium, type, tagged[at] === 1) : Math.min(10, 2 * Math.max(0, count - 1))
-  }
-  return out
-}
-
-function reachOf(links: Map<number, Iterable<number>>, at: number): number[] {
-  const found: number[] = []
-  const seen = new Set([at])
-  let frontier = [at]
-  for (let hop = 1; hop <= 2; hop++) {
-    const next: number[] = []
-    for (const from of frontier) {
-      for (const other of links.get(from) ?? []) {
-        if (seen.has(other)) continue
-        seen.add(other)
-        next.push(other)
-        found.push(other)
-      }
-    }
-    frontier = next
-  }
-  return found
-}
-
-interface Context {
-  eid: Numbering
-  masks: Uint8Array
-  score: Scores
+interface Context extends Derived {
   out: string
   target: number
 }
 
-interface KeySource {
-  key: string
-  entity: string
-  ekind: string
-  kind: NameKind
-  variant: number
-  support: number
-}
-
-const NAME_COLUMNS = 'n.entity AS entity, n.ekind AS ekind, n.kind AS kind, n.variant AS variant, n.support AS support'
-
-const KEY_SQL: Record<KeyTable, string> = {
-  flat: `SELECT n.flat AS key, ${NAME_COLUMNS} FROM names n ORDER BY key, entity, n.rowid`,
-  latin: `SELECT n.latin AS key, ${NAME_COLUMNS} FROM names n WHERE n.latin GLOB '*[a-z]*' ORDER BY key, entity, n.rowid`,
-  sound: `SELECT s.key AS key, ${NAME_COLUMNS} FROM sounds s JOIN names n ON n.rowid = s.name ORDER BY key, entity, n.rowid`,
-  part: `SELECT p.part AS key, ${NAME_COLUMNS} FROM parts p JOIN names n ON n.rowid = p.name ORDER BY key, entity, n.rowid`,
-  initial: `SELECT i.key AS key, ${NAME_COLUMNS} FROM initials i JOIN names n ON n.rowid = i.name ORDER BY key, entity, n.rowid`,
-}
-
 function keyTable(db: Database, layer: Layer, table: KeyTable, context: Context): Writer {
-  const { eid, masks, score } = context
   const writer = new Writer(join(context.out, layer, table), context.target)
-  let group: { key: string; at: number; character: boolean; best: [number, boolean]; main: number } | undefined
-  const emit = () => {
-    if (!group) return
-    const { key, at, character, best, main } = group
-    const flags = (character ? CHARACTER : 0) | (score.adult[at] ? ADULT : 0) | (masks[at] ?? 0)
-    const tail = [score.rank[at], score.standing[at], score.extra[at]]
-    writer.add([key, at, best[0], flags | (best[1] ? MAIN : 0), ...tail], key)
-    if (!best[1] && main >= 0) writer.add([key, at, main, flags | MAIN, ...tail], key)
-  }
-  for (const row of db.query<KeySource, []>(KEY_SQL[table]).iterate()) {
-    const at = eid.get(row.entity)
-    if (at === undefined) continue
-    const weight = Math.round(weightOf(row) * 1000)
-    const isMain = row.kind === 'main' || row.kind === 'official'
-    if (!group || group.key !== row.key || group.at !== at) {
-      emit()
-      group = {
-        key: row.key,
-        at,
-        character: row.ekind === 'character',
-        best: [weight, isMain],
-        main: isMain ? weight : -1,
-      }
-      continue
-    }
-    if (weight > group.best[0] || (weight === group.best[0] && isMain)) group.best = [weight, isMain]
-    if (isMain && weight > group.main) group.main = weight
-  }
-  emit()
+  if (table === 'tail') {
+    const rows = [...keyRows(db, 'flat', context)].map(([key, ...rest]): Key => [reversed(key), ...rest])
+    rows.sort((a, b) => compare(a[0], b[0]) || a[1] - b[1])
+    for (const row of rows) writer.add(row, row[0])
+  } else for (const row of keyRows(db, table, context)) writer.add(row, row[0])
   writer.flush()
   return writer
 }
@@ -481,8 +296,7 @@ export async function chunk(dir: string, target = 32_768): Promise<void> {
   if (!spine) throw new Error(`aninames: ${join(dir, `${SPINE}.sqlite`)} is missing; run mise run build`)
   const out = join(dir, 'site')
   rmSync(out, { recursive: true, force: true })
-  const { eid, masks } = numbering(dbs)
-  const context: Context = { eid, masks, score: scores(dbs, eid), out, target }
+  const context: Context = { ...contextOf(dbs), out, target }
   const built = builtAt(spine)
   const layers: Partial<Record<Layer, Record<Table, Packed>>> = {}
   let files = 0

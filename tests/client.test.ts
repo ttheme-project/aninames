@@ -3,11 +3,12 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type Rows, View } from '../src/client/chunks.ts'
-import { CHARACTER, FORMAT, KEY_TABLES, type KeyRow, pack, present, readManifest } from '../src/client/format.ts'
+import { BOOK, CHARACTER, FORMAT, KEY_TABLES, type KeyRow, pack, present, readManifest } from '../src/client/format.ts'
 import { decode, Names } from '../src/client/names.ts'
 import { compare } from '../src/client/order.ts'
 import { fileSource } from '../src/client/source.ts'
 import { Writer } from '../src/files.ts'
+import { reversed } from '../src/text.ts'
 
 test('keys sort by code point like SQLite and UTF-8 bytes, not by UTF-16 unit', () => {
   const words = ['\u{1F600}', '￿', '', 'z', '\u{10000}', '퟿', 'ア', '']
@@ -205,23 +206,25 @@ test('cast lists the characters at home in a tag by role before posts', async ()
   }
 })
 
-test('a lifted work stays below a seed that is not a book, even a tied one, and an anime passes its manga', async () => {
+test('a work of the family its key row names stays below a seed that is not a book, and an anime passes its manga', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'aninames-'))
   try {
     const here = present('unlicensed')
     const flat = new Writer(join(dir, 'unlicensed', 'flat'), 4096)
-    flat.add(['starfall', 0, 1000, here, 500, 500, 0], 'starfall')
-    flat.add(['starfall', 4, 1000, here, 500, 500, 0], 'starfall')
-    flat.add(['tidepool', 2, 1000, here, 500, 500, 0], 'tidepool')
+    flat.add(['starfall', 0, 1000, here | BOOK, 500, 500, 0], 'starfall')
+    flat.add(['starfall', 4, 1000, here, 500, 500, 0, 0], 'starfall')
+    flat.add(['starfalltrailer', 1, 1000, here, 900, 900, 8, 0], 'starfalltrailer')
+    flat.add(['tidepool', 2, 1000, here | BOOK, 500, 500, 0], 'tidepool')
+    flat.add(['tidepoolanime', 3, 1000, here, 900, 900, 8, 2], 'tidepoolanime')
     flat.flush()
     const entity = new Writer(join(dir, 'unlicensed', 'entity'), 4096)
-    const work = (eid: number, name: string, reach: number[], standing: number, extra: number, medium: string) => [
+    const work = (eid: number, name: string, standing: number, extra: number, medium: string) => [
       eid,
       `w/x:${eid}`,
       [[name, 'en', 1, 0]],
       [],
       [],
-      reach,
+      [],
       standing,
       standing,
       extra,
@@ -233,11 +236,11 @@ test('a lifted work stays below a seed that is not a book, even a tied one, and 
       medium,
     ]
     for (const row of [
-      work(0, 'Starfall', [1], 500, 0, 'manga'),
-      work(1, 'Starfall Trailer', [0, 4], 900, 8, 'anime'),
-      work(2, 'Tidepool', [3], 500, 0, 'manga'),
-      work(3, 'Tidepool Anime', [2], 900, 8, 'anime'),
-      work(4, 'Starfall', [1], 500, 0, 'game'),
+      work(0, 'Starfall', 500, 0, 'manga'),
+      work(1, 'Starfall Trailer', 900, 8, 'anime'),
+      work(2, 'Tidepool', 500, 0, 'manga'),
+      work(3, 'Tidepool Anime', 900, 8, 'anime'),
+      work(4, 'Starfall', 500, 0, 'game'),
     ])
       entity.add(row, row[1] as string, row[0] as number)
     entity.flush()
@@ -252,6 +255,42 @@ test('a lifted work stays below a seed that is not a book, even a tied one, and 
       'w/x:1',
     ])
     expect((await names.search('tidepool', { kind: 'work' })).map((found) => found.id)).toEqual(['w/x:3', 'w/x:2'])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a name mistyped at its start is found by its end, far from where it sorts', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'aninames-'))
+  try {
+    const here = present('unlicensed')
+    const words = ['frieren', 'gamma', 'hotel', 'india', 'juliet', 'kilo', 'lima', 'mike', 'oscar', 'papa', 'quebec']
+    const rows = words.map((word, eid): KeyRow => [word, eid, 1000, here, 0, 0, 0])
+    const flat = new Writer(join(dir, 'unlicensed', 'flat'), 60)
+    for (const row of rows) flat.add([...row], row[0])
+    flat.flush()
+    const tail = new Writer(join(dir, 'unlicensed', 'tail'), 60)
+    const backwards = rows.map(([word, ...rest]): KeyRow => [reversed(word), ...rest])
+    for (const row of backwards.sort((a, b) => compare(a[0], b[0]))) tail.add([...row], row[0])
+    tail.flush()
+    const entity = new Writer(join(dir, 'unlicensed', 'entity'), 4096)
+    words.forEach((word, eid) => {
+      entity.add([eid, `w/x:${eid}`, [[word, 'en', 0, 0]], [], [], [], 0, 0, 0, 0, []], `w/x:${eid}`, eid)
+    })
+    entity.flush()
+    const empty = pack([], [])
+    const keys = Object.fromEntries(KEY_TABLES.map((table) => [table, empty]))
+    const layers = {
+      unlicensed: { ...keys, flat: flat.packed(false), tail: tail.packed(false), entity: entity.packed(true) },
+    }
+    writeFileSync(join(dir, 'manifest.json'), JSON.stringify({ aninames: FORMAT, built: '', layers }))
+    expect(flat.hashes.length).toBeGreaterThan(4)
+    const names = new Names(fileSource(dir))
+    for (const typed of ['rfieren', 'trieren', 'rieren']) {
+      const found = await names.search(typed, { kind: 'work' })
+      expect(found.map((card) => [card.id, card.match])).toEqual([['w/x:0', 'typo']])
+    }
+    expect((await names.search('quebex', { kind: 'work' })).map((card) => card.id)).toEqual(['w/x:10'])
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

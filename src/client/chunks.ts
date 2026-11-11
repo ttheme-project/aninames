@@ -1,4 +1,6 @@
-import type { Layer } from '../model.ts'
+import { TOP } from '../match.ts'
+import type { Kind, Layer } from '../model.ts'
+import { reversed } from '../text.ts'
 import {
   chunkPath,
   type EntityRow,
@@ -24,6 +26,16 @@ export interface Range {
   keep?: (row: KeyRow) => boolean
 }
 
+export interface Reader {
+  readonly wanted: ReadonlySet<string>
+  keys(table: KeyTable, range: Range): KeyRow[]
+  near(name: string, kind?: Kind): KeyRow[]
+  ending(name: string, kind?: Kind): KeyRow[]
+}
+
+const RADIUS = 1
+const MOST_ENDING = 1000
+
 function last(count: number, below: (at: number) => boolean): number {
   let lo = 0
   let hi = count
@@ -44,7 +56,7 @@ function firstRow(rows: KeyRow[], low: string, open: boolean): number {
   )
 }
 
-export class View {
+export class View implements Reader {
   readonly wanted = new Set<string>()
   readonly manifest: Manifest
   readonly layers: Layer[]
@@ -101,7 +113,19 @@ export class View {
     return out
   }
 
-  around(table: KeyTable, key: string, radius: number): KeyRow[] {
+  ending(name: string): KeyRow[] {
+    const low = reversed(name)
+    return this.keys('tail', { low, high: `${low}${TOP}`, open: true, limit: MOST_ENDING, spans: 1 }).map(
+      ([key, ...rest]): KeyRow => [reversed(key), ...rest],
+    )
+  }
+
+  near(name: string): KeyRow[] {
+    const ends = this.around('tail', reversed(name), RADIUS).map(([key, ...rest]): KeyRow => [reversed(key), ...rest])
+    return [...this.around('flat', name, RADIUS), ...ends]
+  }
+
+  private around(table: KeyTable, key: string, radius: number): KeyRow[] {
     const out: KeyRow[] = []
     for (const layer of this.layers) {
       const spans = this.manifest.layers.get(layer)?.keys[table]

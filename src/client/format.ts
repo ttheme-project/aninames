@@ -4,7 +4,7 @@ import { compare } from './order.ts'
 
 export const FORMAT = 1
 
-export const KEY_TABLES = ['flat', 'latin', 'sound', 'part', 'initial'] as const
+export const KEY_TABLES = ['flat', 'latin', 'sound', 'part', 'initial', 'tail'] as const
 
 export type KeyTable = (typeof KEY_TABLES)[number]
 
@@ -28,9 +28,14 @@ export const TRUSTED: readonly string[] = ['wikidata', 'aod', 'anidb', 'vndb']
 export const CHARACTER = 1
 export const MAIN = 2
 export const ADULT = 4
+export const BOOK = 128
 
 export function present(layer: Layer): number {
   return 8 << LAYERS.indexOf(layer)
+}
+
+export function layersOf(flags: number): number {
+  return flags & ~(CHARACTER | MAIN | ADULT | BOOK)
 }
 
 const HASH = /^[0-9a-f]{12}$/
@@ -194,6 +199,7 @@ export type KeyRow = readonly [
   standing: number,
   extra: number,
   tier?: number,
+  kin?: readonly number[],
 ]
 
 export interface Name {
@@ -231,13 +237,19 @@ export interface EntityRow {
 
 const isInt = (value: unknown): value is number => Number.isSafeInteger(value)
 
-function keyRow(value: unknown): KeyRow | undefined {
+function keyRow(value: unknown, tiered: boolean): KeyRow | undefined {
   if (!Array.isArray(value) || value.length < 7) return undefined
-  const [key, eid, weight, flags, rank, standing, extra, tier] = value
+  const [key, eid, weight, flags, rank, standing, extra, more] = value
   if (typeof key !== 'string' || !isCount(eid)) return undefined
   if (!isInt(weight) || !isInt(flags) || !isInt(rank) || !isInt(standing) || !isInt(extra)) return undefined
-  return isCount(tier)
-    ? [key, eid, weight, flags, rank, standing, extra, tier]
+  if (tiered) {
+    return isCount(more)
+      ? [key, eid, weight, flags, rank, standing, extra, more]
+      : [key, eid, weight, flags, rank, standing, extra]
+  }
+  const kin = isCount(more) ? [more] : Array.isArray(more) && more.every(isCount) ? (more as number[]) : undefined
+  return kin
+    ? [key, eid, weight, flags, rank, standing, extra, undefined, kin]
     : [key, eid, weight, flags, rank, standing, extra]
 }
 
@@ -346,7 +358,8 @@ function entityRow(value: unknown): EntityRow | undefined {
 
 export function readRows(table: Table, value: unknown): KeyRow[] | EntityRow[] | undefined {
   if (!Array.isArray(value)) return undefined
-  const read: (row: unknown) => KeyRow | EntityRow | undefined = table === 'entity' ? entityRow : keyRow
+  const tiered = table === 'tag' || table === 'home'
+  const read = (row: unknown) => (table === 'entity' ? entityRow(row) : keyRow(row, tiered))
   const rows: (KeyRow | EntityRow)[] = []
   for (const row of value) {
     const decoded = read(row)

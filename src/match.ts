@@ -28,7 +28,7 @@ export function priorOf(medium: string | null, type: string | null, tagged: bool
 
 const PRINTED: ReadonlySet<string> = new Set(['manga', 'novel'])
 
-const LOOSE: ReadonlySet<string> = new Set(['prefix', 'typing', 'initials prefix', 'substring', 'typo'])
+const LOOSE: ReadonlySet<string> = new Set(['prefix', 'typing', 'initials prefix', 'ending', 'typo'])
 
 export function ownMatch(how: string | undefined): boolean {
   return how !== undefined && !how.startsWith('family(') && !LOOSE.has(how)
@@ -38,8 +38,8 @@ export function isBook(medium: string | null | undefined): boolean {
   return PRINTED.has(medium ?? '')
 }
 
-export function liftsBelow(seed: string, medium: string | null | undefined, own: string | undefined): boolean {
-  return ownMatch(seed) && seed !== 'part' && !isBook(medium) && !ownMatch(own)
+export function liftsBelow(seed: string, book: boolean, own: string | undefined): boolean {
+  return ownMatch(seed) && seed !== 'part' && !book && !ownMatch(own)
 }
 
 const BELOW = 0.01

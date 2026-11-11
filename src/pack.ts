@@ -1,19 +1,29 @@
 import { mkdir, readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { LAYERS, type Layer } from './model.ts'
+import { LAYERS, type Layer, type Source } from './model.ts'
 import { pick } from './sources/index.ts'
+import { rawDir } from './stage.ts'
 
 const LEVEL = 6
 
 export const TERMS =
   'Each layer is its own file and keeps the terms of the sources it was built from; combine them on your own machine.'
 
-export async function licenses(): Promise<[Layer, string[]][]> {
-  const sources = await pick([])
-  return LAYERS.map((layer) => [
-    layer,
-    sources.filter((source) => source.layer === layer).map((source) => `${source.name}: ${source.license}`),
-  ])
+export async function dated(sources: Source[]): Promise<Map<string, string>> {
+  const days = new Map<string, string>()
+  for (const source of sources) {
+    const day = await source.dated?.(rawDir(source))
+    if (day) days.set(source.name, day)
+  }
+  return days
+}
+
+export async function licenses(sources?: Source[]): Promise<[Layer, string[]][]> {
+  const all = sources ?? (await pick([]))
+  const days = await dated(all)
+  const line = ({ name, license }: Source) =>
+    `${name}: ${license}${days.has(name) ? `, data of ${days.get(name)}` : ''}`
+  return LAYERS.map((layer) => [layer, all.filter((source) => source.layer === layer).map(line)])
 }
 
 export async function notice(): Promise<string> {

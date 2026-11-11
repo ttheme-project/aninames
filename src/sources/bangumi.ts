@@ -369,6 +369,11 @@ const source: Source = {
     const meta = { asset: asset.name, size: asset.size, digest: asset.digest, downloaded: new Date().toISOString() }
     await Bun.write(marker, `${JSON.stringify(meta)}\n`)
   },
+  async dated(raw) {
+    const marker = Bun.file(join(raw, 'meta.json'))
+    if (!(await marker.exists())) return undefined
+    return /\d{4}-\d{2}-\d{2}/.exec(((await marker.json()) as { asset: string }).asset)?.[0]
+  },
   async *stage(raw) {
     const cast = new Set<number>()
     for await (const each of records<Cast>(join(raw, CASTS))) cast.add(each.subject_id)

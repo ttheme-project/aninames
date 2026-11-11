@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { Names, trace } from './client/names.ts'
 import { fileSource, type Source } from './client/source.ts'
 import type { Layer } from './model.ts'
-import { BANDS, FROZEN, type Frozen, forms } from './probe.ts'
+import { BANDS, FROZEN, type Frozen, forms, franchise, shareOf, workOf } from './probe.ts'
 import { Index } from './search.ts'
 
 interface Tally {
@@ -40,12 +40,26 @@ export async function compare(dir: string, layers: Layer[], limit: number): Prom
   const costs: Cost[] = []
   const sqlite: number[] = []
   const changed: string[] = []
+  const family = { base: 0, files: 0, total: 0 }
   for (const kind of ['work', 'character'] as const) {
     for (const band of BANDS) {
       for (const id of (frozen[kind][band.name] ?? []).slice(0, limit)) {
         const card = index.card(id)
         if (!card) continue
-        for (const [shape, query] of forms(card)) {
+        for (const [query, kin] of franchise(index, card)) {
+          const names = new Names(source, { layers })
+          const found = await names.search(query, { kind, limit: 10 })
+          family.base += shareOf(
+            kin,
+            index.search(query, { kind, limit: 10 }).map((hit) => hit.id),
+          )
+          family.files += shareOf(
+            kin,
+            found.map((hit) => hit.id),
+          )
+          family.total++
+        }
+        for (const [shape, query] of forms(card, workOf(index, card))) {
           const form = `${kind}s ${index.homonyms(query, kind) > 1 ? `${shape} (shared)` : shape}`
           let started = performance.now()
           const base = index.search(query, { kind, limit: 10 }).findIndex((hit) => hit.id === id)
@@ -78,6 +92,9 @@ export async function compare(dir: string, layers: Layer[], limit: number): Prom
   )
   console.log(
     `  ${'all'.padEnd(40)} ${pct(all.base, all.total)} → ${pct(all.files, all.total)}  (${all.base} → ${all.files} of ${all.total})`,
+  )
+  console.log(
+    `  ${'family works in the first ten'.padEnd(40)} ${pct(family.base, family.total)} → ${pct(family.files, family.total)}  n=${family.total}`,
   )
   console.log('\ncold, per query (nothing cached):')
   console.log(`  rounds to results  ${quantiles(costs.map((c) => c.rounds))}`)

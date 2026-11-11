@@ -79,6 +79,7 @@ export interface Source {
   license: string
   fetch(raw: string): Promise<void>
   stage(raw: string): AsyncIterable<Entry> | Iterable<Entry>
+  dated?(raw: string): Promise<string | undefined>
 }
 
 export function ref(ns: Namespace, id: string | number): Ref {

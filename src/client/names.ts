@@ -7,7 +7,7 @@ import {
   ADULT,
   CHARACTER,
   type EntityRow,
-  MAIN,
+  layersOf,
   type Manifest,
   NAME_KINDS,
   type Name,
@@ -244,7 +244,7 @@ export class Names {
         if (kind && (flags & CHARACTER ? 'character' : 'work') !== kind) continue
         if (!adult && flags & ADULT) continue
         const known = best.get(eid)
-        const mask = flags & ~(CHARACTER | MAIN | ADULT)
+        const mask = layersOf(flags)
         if (!known || posts > known.posts) {
           best.set(eid, {
             posts,

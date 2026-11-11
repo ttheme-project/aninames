@@ -307,6 +307,10 @@ export default {
       `danbooru: ${counts.tags} character tags with ${MIN_POSTS}+ posts, ${counts.aliases} aliases, ${counts.wiki} wiki pages with other names; ${requests} requests to ${HOST}`,
     )
   },
+  async dated(raw) {
+    const meta = Bun.file(join(raw, 'meta.json'))
+    return (await meta.exists()) ? ((await meta.json()) as Meta).date.slice(0, 10) : undefined
+  },
   async *stage(raw) {
     const tags = await read<Tag[]>(raw, 'tags')
     const aliases = await read<Record<string, string>>(raw, 'aliases')
