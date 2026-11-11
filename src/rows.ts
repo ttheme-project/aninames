@@ -168,9 +168,13 @@ function kinOf(dbs: Dbs, context: Omit<Context, 'kin'>, links: Map<number, Set<n
       if (a !== b) head[Math.max(a, b)] = Math.min(a, b)
     }
   }
+  const sizes = new Map<number, number>()
+  ids.forEach((id, at) => {
+    if (id.startsWith('w/')) sizes.set(find(at), (sizes.get(find(at)) ?? 0) + 1)
+  })
   const kin = new Map<number, number[]>()
   ids.forEach((id, at) => {
-    if (id.startsWith('w/') && find(at) !== at) kin.set(at, [find(at)])
+    if (id.startsWith('w/') && (sizes.get(find(at)) ?? 0) > 1) kin.set(at, [find(at)])
   })
   const casts = new Map<number, Set<number>>()
   for (const db of dbs.values()) {
@@ -207,7 +211,7 @@ export interface KeySource {
   support: number
 }
 
-export type Sorted = Exclude<KeyTable, 'tail'>
+export type Sorted = Exclude<KeyTable, 'tail' | 'kin'>
 
 export type Key = [
   key: string,

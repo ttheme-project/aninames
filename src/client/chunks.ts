@@ -6,6 +6,8 @@ import {
   type EntityRow,
   type KeyRow,
   type KeyTable,
+  KIN_WIDTH,
+  kinKey,
   type Manifest,
   present,
   type Spans,
@@ -31,6 +33,7 @@ export interface Reader {
   keys(table: KeyTable, range: Range): KeyRow[]
   near(name: string, kind?: Kind): KeyRow[]
   ending(name: string, kind?: Kind): KeyRow[]
+  kin(family: number): KeyRow[]
 }
 
 const RADIUS = 1
@@ -117,6 +120,13 @@ export class View implements Reader {
     const low = reversed(name)
     return this.keys('tail', { low, high: `${low}${TOP}`, open: true, limit: MOST_ENDING, spans: 1 }).map(
       ([key, ...rest]): KeyRow => [reversed(key), ...rest],
+    )
+  }
+
+  kin(family: number): KeyRow[] {
+    const low = kinKey(family)
+    return this.keys('kin', { low, high: `${low}${TOP}`, open: true }).map(
+      ([key, ...rest]): KeyRow => [key.slice(KIN_WIDTH), ...rest],
     )
   }
 

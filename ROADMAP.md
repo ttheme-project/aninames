@@ -66,15 +66,17 @@ So neither stable entity numbers nor stable cuts are worth their cost while a ke
 
 - Effort: large.
 
-### 9. What the first round does not see
+### 9. What a search still gets wrong
 
-Since 2026-11-11 a search ranks from the key rows of its first round (each carries its entity's family), and reads `entity` rows only to show cards; one engine ranks over the files and over SQLite. Against the 0.8 client on the probe sample (4,646 queries of the forms it had, 633 of a name with a work's title): 24 files for 39 and 242 KB for 332 per cold query, results after one round for 83% of the queries (27%), the entity first 4,093 times for 4,084 and 618 for 555. What that left:
+Since 0.9 (2026-11-11) a search ranks from the key rows of its first round (each carries its entity's family) and reads `entity` rows only to show cards, and one engine ranks over the files and over SQLite. Each of the limits written here then was checked the same day against the queries that showed it; three were not what they were said to be.
 
-- A family's work is lifted only when the query finds it by a name, at its start, as one of its words, or at its end in Han or kana. One whose name holds the query elsewhere (`Shana OVA` in a longer title, `cuckoo` in `cuckoos`) is no longer lifted: 96.6% of the family that holds the query is in the first ten, for 99.6%. An ending lookup for every script recovered half of it (98.1%) for 57 KB more per search, so it was kept to the scripts that have no words.
-- A two-word name with a typo can be read as a name and a work's title when some work starts with the mistyped word: 5 of 186 such names (`Rikka nohana`), since typos are looked for only when nothing matches.
-- A Japanese given name with a title (`ひとり ぼっち`) finds nobody when the full name has no space: the ending match (58) is under what a scoped name needs (80).
-- `Index` works out every entity's number, popularity and family when it opens, about 4 s on the 11-03 build, so `mise run search` waits that long; the build could store them.
-- The family numbers cost 22 MB of the 162 MB site.
+- A family's work whose name holds the query in its middle (`新世紀エヴァンゲリオン劇場版 Air/まごころを、君に` for `エヴァンゲリオン`, a compilation film for its series in Korean) was no longer lifted, because the first round holds names only of the works the query found: 18 of the 30 family works lost on the probe sample. Seven more were lost to the ending lookup being kept to Han and kana, two of those to a rule that skipped it for a query with a space, and five were only another ten of a family with more than nine. Fixed in 0.9.1 by the `kin` table, read in the round that fetches the cards: 99.5% of a family that holds the query is in the first ten (99.6% with 0.8, 96.6% with 0.9.0), for 1.4 files and 14 KB more per search and no round more.
+- A two-word name with a typo was read as a name and a work's title (4 of 186, not 5): not because typos are looked for only when nothing matches, but because that reading took any evidence at full score, a title that only starts with the word (`Yagam` for `Yagami Yuu…`) or sounds like it, among hundreds of people of that given name. Since 0.9.1 such a loose reading stays below a name one letter from the whole query, and a reading of either kind stays below a name that matches the whole query instead of being hidden by it. One of the four is left, a coincidence no rule separates: `Aoki ouji`, where a character named Aoki is in a film with 王子 in its title.
+- A Japanese given name with a title was never the limit it was said to be: `ひとり ぼっち・ざ・ろっく!` finds 後藤ひとり through the names Bangumi writes with a space. What differed was `ひとり ぼっち`, which is the whole name of 一里ぼっち, and 0.9.0 hid the other reading; 0.9.1 lists it below.
+- A typo that itself matches another name is not looked up as a typo: 8 of the 395 names with a middle letter dropped (`Shala` sounds like サラ, `Spadam` starts スパーダモン). This one is a choice: looking whenever no whole name matches costs a search as it is typed 37% more KB a keystroke.
+- A name that ends with a query of several Latin or Hangul words (`no hana` for `Aku no Hana`) is not found, unless its family lifts it; an ending lookup for every script, in every part of a query, was measured at 57 KB a search.
+- `Index` works out every entity's number, popularity and family when it opens: 1.6 s on the 11-03 build, about 4 s when the files are not in the system's cache, which is what `mise run search` waits. Storing them at build would not serve an index opened on fewer layers, whose flags and bonuses differ; keeping what was worked out beside the files, by the layers and their modification times, would.
+- The family numbers cost 22 MB and `kin` 5 MB of the 168 MB site. Numbering families from the most used would save about a quarter of the 22 (measured on `unlicensed/flat`: 21.7 MB to 20.7), and the number would no longer be an entity's.
 
 - Effort: small to medium each.
 

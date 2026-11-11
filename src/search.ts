@@ -41,6 +41,7 @@ export class Index implements Reader {
   private readonly dbs = new Map<Layer, Database>()
   private readonly context: Context
   private readonly ranks = new Map<string, number>()
+  private families: Map<number, string[]> | undefined
 
   constructor(dir: string, layers: Layer[] = [...LAYERS]) {
     for (const layer of [SPINE, ...layers.filter((each) => each !== SPINE)]) {
@@ -67,7 +68,7 @@ export class Index implements Reader {
   }
 
   keys(table: KeyTable, range: Range): KeyRow[] {
-    if (table === 'tail') return []
+    if (table === 'tail' || table === 'kin') return []
     const { low, high, open = false, limit = Number.POSITIVE_INFINITY, spans, keep } = range
     const span = { low, high, open, ...(spans === undefined ? {} : { limit: spans * SPAN_ROWS }) }
     const out: KeyRow[] = []
@@ -110,6 +111,30 @@ export class Index implements Reader {
         (a, b) => compare(a.key, b.key) || compare(a.entity, b.entity) || a.rowid - b.rowid,
       )
       out.push(...this.read(keysOf(sorted, this.context)))
+    }
+    return out
+  }
+
+  kin(family: number): KeyRow[] {
+    if (!this.families) {
+      this.families = new Map()
+      for (const [at, [head]] of this.context.kin) {
+        const id = this.context.ids[at] as string
+        if (head === undefined || !id.startsWith('w/')) continue
+        const members = this.families.get(head)
+        if (members) members.push(id)
+        else this.families.set(head, [id])
+      }
+    }
+    const members = this.families.get(family) ?? []
+    if (members.length === 0) return []
+    const sql = `SELECT n.flat AS key, n.entity AS entity, n.ekind AS ekind, n.kind AS kind, n.variant AS variant,
+  n.support AS support, n.rowid AS rowid FROM names n WHERE n.entity IN (${members.map(() => '?').join(', ')})`
+    const out: KeyRow[] = []
+    for (const db of this.dbs.values()) {
+      const rows = db.query<KeySource & { rowid: number }, string[]>(sql).all(...members)
+      rows.sort((a, b) => compare(a.key, b.key) || compare(a.entity, b.entity) || a.rowid - b.rowid)
+      out.push(...this.read(keysOf(rows, this.context)))
     }
     return out
   }
@@ -211,7 +236,7 @@ export class Index implements Reader {
     )
   }
 
-  kin(id: string, text: string): string[] {
+  relatives(id: string, text: string): string[] {
     const held = flat(text)
     const found: string[] = []
     const seen = new Set([id])

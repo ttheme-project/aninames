@@ -10,6 +10,7 @@ import {
   FORMAT,
   HASH_LENGTH,
   type KeyTable,
+  kinKey,
   NAME_KINDS,
   type Packed,
   pack,
@@ -90,6 +91,14 @@ function keyTable(db: Database, layer: Layer, table: KeyTable, context: Context)
   const writer = new Writer(join(context.out, layer, table), context.target)
   if (table === 'tail') {
     const rows = [...keyRows(db, 'flat', context)].map(([key, ...rest]): Key => [reversed(key), ...rest])
+    rows.sort((a, b) => compare(a[0], b[0]) || a[1] - b[1])
+    for (const row of rows) writer.add(row, row[0])
+  } else if (table === 'kin') {
+    const rows: Key[] = []
+    for (const [key, at, weight, flags, rank, standing, extra, family] of keyRows(db, 'flat', context)) {
+      if (!(flags & CHARACTER) && typeof family === 'number')
+        rows.push([`${kinKey(family)}${key}`, at, weight, flags, rank, standing, extra])
+    }
     rows.sort((a, b) => compare(a[0], b[0]) || a[1] - b[1])
     for (const row of rows) writer.add(row, row[0])
   } else for (const row of keyRows(db, table, context)) writer.add(row, row[0])

@@ -28,12 +28,14 @@ function fixture(dir: string): Database {
   add('w/x:3', 'Tidepool', 'anime')
   add('w/x:4', 'New Starfall', 'anime')
   add('w/x:5', '星降る夜', 'anime')
+  add('w/x:6', 'Gekijouban Starfall Re', 'anime')
   add('c/x:1', 'Pip')
   add('c/x:2', 'Pip')
   const tie = db.prepare('INSERT INTO related (work, other) VALUES (?, ?)')
   const ties: [string, string][] = [
     ['w/x:1', 'w/x:2'],
     ['w/x:2', 'w/x:4'],
+    ['w/x:1', 'w/x:6'],
   ]
   for (const [a, b] of ties) {
     tie.run(a, b)
@@ -54,7 +56,7 @@ test('a work carries the first of its family and a character the families of its
     const db = fixture(dir)
     const { eid, kin, score } = contextOf(new Map([['unlicensed', db]]))
     const at = (id: string) => eid.get(id) as number
-    expect(kin.get(at('w/x:1'))).toBeUndefined()
+    expect(kin.get(at('w/x:1'))).toEqual([at('w/x:1')])
     expect(kin.get(at('w/x:2'))).toEqual([at('w/x:1')])
     expect(kin.get(at('w/x:4'))).toEqual([at('w/x:1')])
     expect(kin.get(at('w/x:3'))).toBeUndefined()
@@ -67,7 +69,7 @@ test('a work carries the first of its family and a character the families of its
   }
 })
 
-test('the files and SQLite give the same answers, both from the rows of one round', async () => {
+test('the files and SQLite give the same answers, and a family lifts its works whose names hold the query', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'aninames-'))
   try {
     fixture(dir).close()
@@ -82,7 +84,12 @@ test('the files and SQLite give the same answers, both from the rows of one roun
     const names = new Names(fileSource(join(dir, 'site')))
     expect((await names.search('pip starfall')).map((card) => card.id)).toEqual(['c/x:1'])
     expect((await names.search('pip tidepool')).map((card) => card.id)).toEqual(['c/x:2'])
-    expect((await names.search('starfall', { kind: 'work' })).map((card) => card.id)).toEqual(['w/x:2', 'w/x:1'])
+    expect((await names.search('starfall', { kind: 'work' })).map((card) => card.id)).toEqual([
+      'w/x:2',
+      'w/x:6',
+      'w/x:4',
+      'w/x:1',
+    ])
     index.close()
   } finally {
     rmSync(dir, { recursive: true, force: true })

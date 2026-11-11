@@ -28,11 +28,14 @@ export interface Hit {
   mask: number
   book: boolean
   kin: readonly number[]
+  tied: boolean
   seed?: number
 }
 
 const SEEDS = 8
+const FAMILIES = 3
 const WHOLE = 80
+const ONE_OFF = 75
 const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u
 const SPANS = 2
 
@@ -52,6 +55,7 @@ function hitOf(row: KeyRow, score: number, how: string): Hit {
     mask: layersOf(flags),
     book: (flags & BOOK) !== 0,
     kin: row[8] ?? (character ? [] : [row[1]]),
+    tied: !character && row[8] !== undefined,
   }
 }
 
@@ -96,7 +100,7 @@ function candidates(view: Reader, query: string, kind?: Kind, whole = false): Ma
     for (const row of prefix('flat', low, high))
       consider(row, 60 + 25 * (length / [...row[0]].length), low === q ? 'prefix' : 'typing')
   }
-  if (whole && length >= 3 && UNSPACED.test(q) && !/\s/.test(query.trim())) {
+  if (whole && length >= 3 && UNSPACED.test(q)) {
     for (const row of view.ending(q, kind)) consider(row, 40 + 30 * (length / [...row[0]].length), 'ending')
   }
   return hits
@@ -127,26 +131,37 @@ function fuzzy(view: Reader, query: string, kind?: Kind): Map<number, Hit> {
   return hits
 }
 
-function family(hits: Map<number, Hit>, query: string): void {
+function family(view: Reader, hits: Map<number, Hit>, query: string): void {
   const wanted = flat(query)
   const works = [...hits.values()].filter((hit) => hit.kind === 'work')
   const seeds = works
     .filter((hit) => hit.score >= 50)
     .sort((a, b) => b.score - a.score || Number(a.book) - Number(b.book) || a.eid - b.eid)
     .slice(0, SEEDS)
+  const read = new Map<number, KeyRow[]>()
   for (const seed of seeds) {
     const score = seed.score * 0.97
+    const lifted = (own: Hit | undefined) => ({
+      score,
+      matched: seed.matched,
+      how: `family(${seed.how})`,
+      ...(liftsBelow(seed.how, seed.book, own?.how) ? { seed: seed.eid } : {}),
+    })
     for (const { eid } of works) {
       const own = hits.get(eid) as Hit
       if (eid === seed.eid || own.kin[0] !== seed.kin[0] || own.score >= score) continue
       if (own.how !== 'part' && !own.matched.includes(wanted) && !own.matched.includes(seed.matched)) continue
-      hits.set(eid, {
-        ...own,
-        score,
-        matched: seed.matched,
-        how: `family(${seed.how})`,
-        ...(liftsBelow(seed.how, seed.book, own.how) ? { seed: seed.eid } : {}),
-      })
+      hits.set(eid, { ...own, ...lifted(own) })
+    }
+    const family = seed.kin[0] as number
+    if (!seed.tied || (!read.has(family) && read.size >= FAMILIES)) continue
+    const rows = read.get(family) ?? view.kin(family)
+    read.set(family, rows)
+    for (const row of rows) {
+      const own = hits.get(row[1])
+      if (row[1] === seed.eid || (own && own.score >= score)) continue
+      if (!row[0].includes(wanted) && !row[0].includes(seed.matched)) continue
+      hits.set(row[1], { ...hitOf(row, score, ''), kin: seed.kin, tied: true, ...lifted(own) })
     }
   }
 }
@@ -160,13 +175,18 @@ function scoped(view: Reader, query: string): Map<number, Hit> {
       [tokens.slice(cut), tokens.slice(0, cut)],
     ] as const) {
       const people = [...candidates(view, who.join(' '), 'character').values()].filter((h) => h.score >= 80)
-      const works = [...candidates(view, where.join(' '), 'work').values()].filter((h) => h.score >= 50)
-      const families = new Set(works.map((work) => work.kin[0]))
+      const families = new Map<number, number>()
+      for (const work of candidates(view, where.join(' '), 'work').values()) {
+        const family = work.kin[0] as number
+        if (work.score >= 50) families.set(family, Math.max(families.get(family) ?? 0, work.score))
+      }
       for (const person of people) {
-        if (!person.kin.some((each) => families.has(each))) continue
+        const titled = Math.max(0, ...person.kin.map((each) => families.get(each) ?? 0))
+        if (titled === 0) continue
         const score = 90 + person.score / 10
+        const how = titled >= WHOLE ? 'scoped-work' : 'scoped-start'
         const current = hits.get(person.eid)
-        if (!current || current.score < score) hits.set(person.eid, { ...person, score, how: 'scoped-work' })
+        if (!current || current.score < score) hits.set(person.eid, { ...person, score, how })
       }
     }
   }
@@ -186,15 +206,16 @@ export function search(view: Reader, query: string, options: Options = {}): Hit[
   const other = swapped ? candidates(view, swapped, kind) : undefined
   const people = !kind || kind === 'character' ? scoped(view, query) : undefined
   if (view.wanted.size > 0) return undefined
-  if (Math.max(0, ...[...hits.values()].map((h) => h.score)) < WHOLE) {
-    for (const [eid, hit] of people ?? []) {
-      const current = hits.get(eid)
-      if (!current || current.score < hit.score) hits.set(eid, hit)
-    }
+  const typed = [...hits.values()].sort((a, b) => b.score - a.score)[0]
+  for (const [eid, hit] of people ?? []) {
+    const current = hits.get(eid)
+    if (current && current.score >= Math.min(hit.score, typed && typed.score >= WHOLE ? WHOLE : hit.score)) continue
+    hits.set(eid, typed && typed.score >= WHOLE ? { ...hit, seed: typed.eid } : hit)
   }
-  if (!kind || kind === 'work') family(hits, query)
-  const typos = hits.size === 0 && !other?.size ? fuzzy(view, query, kind) : undefined
-  if (view.wanted.size > 0) return undefined
+  if (!kind || kind === 'work') family(view, hits, query)
+  const firm = () => Math.max(0, ...[...hits.values()].map((h) => (h.how === 'scoped-start' ? 0 : h.score)))
+  const typos = !typed && !other?.size && firm() < 95 ? fuzzy(view, query, kind) : undefined
+  if (typos && view.wanted.size > 0) return undefined
   const merge = (more: Map<number, Hit>, factor: number, how?: string) => {
     for (const [eid, hit] of more) {
       const score = hit.score * factor
@@ -202,12 +223,14 @@ export function search(view: Reader, query: string, options: Options = {}): Hit[
       if (!current || current.score < score) hits.set(eid, { ...hit, score, how: how ? `${how}(${hit.how})` : hit.how })
     }
   }
-  let best = Math.max(0, ...[...hits.values()].map((h) => h.score))
-  if (best < 90 && other) {
-    merge(other, 0.95, 'layout')
-    best = Math.max(0, ...[...hits.values()].map((h) => h.score))
+  if (firm() < 90 && other) merge(other, 0.95, 'layout')
+  if (typos && firm() < 95) {
+    const mended = [...typos.values()].sort((a, b) => b.score - a.score)[0]
+    if (mended && mended.score >= ONE_OFF) {
+      for (const [eid, hit] of hits) if (hit.how === 'scoped-start') hits.set(eid, { ...hit, seed: mended.eid })
+    }
+    merge(typos, 1)
   }
-  if (typos && best < 95) merge(typos, 1)
   const prior = (hit: Hit) => (hit.kind === 'work' ? hit.extra : 0)
   const first = [...hits.values()]
     .map((hit) => ({ ...hit, score: hit.score + (15 * hit.rank) / 1000 + prior(hit) }))

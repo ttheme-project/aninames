@@ -108,7 +108,7 @@ export function franchise(index: Index, card: Card): [query: string, kin: string
   if (card.kind !== 'work') return []
   const { japanese, romaji, short } = named(card)
   return [japanese, romaji, short].flatMap((query): [string, string[]][] => {
-    const kin = query ? index.kin(card.id, query) : []
+    const kin = query ? index.relatives(card.id, query) : []
     return query && kin.length > 0 ? [[query, kin]] : []
   })
 }

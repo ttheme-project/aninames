@@ -4,7 +4,7 @@ import { compare } from './order.ts'
 
 export const FORMAT = 1
 
-export const KEY_TABLES = ['flat', 'latin', 'sound', 'part', 'initial', 'tail'] as const
+export const KEY_TABLES = ['flat', 'latin', 'sound', 'part', 'initial', 'tail', 'kin'] as const
 
 export type KeyTable = (typeof KEY_TABLES)[number]
 
@@ -29,9 +29,14 @@ export const CHARACTER = 1
 export const MAIN = 2
 export const ADULT = 4
 export const BOOK = 128
+export const KIN_WIDTH = 8
 
 export function present(layer: Layer): number {
   return 8 << LAYERS.indexOf(layer)
+}
+
+export function kinKey(family: number): string {
+  return String(family).padStart(KIN_WIDTH, '0')
 }
 
 export function layersOf(flags: number): number {
