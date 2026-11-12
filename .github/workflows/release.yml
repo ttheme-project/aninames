@@ -21,6 +21,7 @@ jobs:
       ANINAMES_DANBOORU: https://shima.donmai.us
       ANINAMES_DANBOORU_LOGIN: ${{ secrets.DANBOORU_LOGIN }}
       ANINAMES_DANBOORU_KEY: ${{ secrets.DANBOORU_API_KEY }}
+      ANINAMES_DANBOORU_USER: ${{ vars.DANBOORU_USER }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

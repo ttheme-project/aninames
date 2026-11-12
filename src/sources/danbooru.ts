@@ -1,6 +1,6 @@
 import { rename } from 'node:fs/promises'
 import { join } from 'node:path'
-import { type Entry, type Name, ref, type Source } from '../model.ts'
+import { type Entry, type Name, ref, type Source, USER_AGENT } from '../model.ts'
 import { fresh, json, sleep } from '../net.ts'
 import { flat, hasHangul, hasKanji, qualifiers } from '../text.ts'
 
@@ -10,8 +10,12 @@ const LOGIN = process.env.ANINAMES_DANBOORU_LOGIN ?? ''
 
 const KEY = process.env.ANINAMES_DANBOORU_KEY ?? ''
 
-const AUTH: Record<string, string> =
-  LOGIN && KEY ? { Authorization: `Basic ${Buffer.from(`${LOGIN}:${KEY}`).toString('base64')}` } : {}
+const USER = process.env.ANINAMES_DANBOORU_USER ?? ''
+
+const AUTH: Record<string, string> = {
+  ...(LOGIN && KEY ? { Authorization: `Basic ${Buffer.from(`${LOGIN}:${KEY}`).toString('base64')}` } : {}),
+  ...(/^\d+$/.test(USER) ? { 'User-Agent': `${USER_AGENT}; user #${USER}` } : {}),
+}
 
 const MIN_POSTS = 5
 
@@ -132,7 +136,7 @@ async function get<T>(url: string): Promise<T> {
   }
   const reason = failure instanceof Error ? failure.message.replace(/^aninames: /, '') : String(failure)
   throw new Error(
-    `aninames: ${url} failed ${TRIES} times (${reason}); ANINAMES_DANBOORU can name another Danbooru host`,
+    `aninames: ${url} failed ${TRIES} times (${reason}); ANINAMES_DANBOORU_USER names the account danbooru asks for, and ANINAMES_DANBOORU another Danbooru host`,
   )
 }
 
